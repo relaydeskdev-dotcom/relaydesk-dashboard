@@ -530,7 +530,7 @@ export default function 메일원문보기모달({
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <h2 className="text-lg font-bold text-slate-950">
-                원문 보기 테스트 2026
+                원문 보기 
               </h2>
 
               {제목 && (

@@ -7,8 +7,8 @@ export default async function Home() {
   const { data, error } = await supabase
     .from("emails")
     .select("*")
-    .order("수신 시각", { ascending: false });
-
+    .order("수신 시각", { ascending: false })
+    .limit(200);
   const emails = (data ?? []) as EmailRow[];
 
   return (

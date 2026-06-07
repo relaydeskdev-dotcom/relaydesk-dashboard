@@ -149,7 +149,13 @@ function 메일푸터제거(text: string): string {
     .replace(/\u00a0/g, " ")
     .trim();
 
-  const 줄목록 = 정리된텍스트.split("\n");
+  
+  const 강제푸터구분된텍스트 = 정리된텍스트.replace(
+  /(이 알림은.+?이메일 주소로 전송되었습니다|본 이메일은 발신 전용|본 메일은 발신 전용|this email was sent to|this is an automated email|please do not reply|view this email in your browser)/gi,
+  "\n$1"
+);
+
+const 줄목록 = 강제푸터구분된텍스트.split("\n");
   let 푸터시작위치 = -1;
 
   const 푸터시작패턴 = [
@@ -223,20 +229,22 @@ function 메일푸터제거(text: string): string {
   return 정리된텍스트;
 }
 
-function 읽기좋게정리(text: string) {
-  return text
+function 읽기좋게정리(text: string): string {
+  const 푸터제거본문 = 메일푸터제거(text);
+
+  return 푸터제거본문
     .replace(/\r/g, "")
     .replace(/\t/g, " ")
     .replace(/\u00a0/g, " ")
     .replace(/[ ]{2,}/g, " ")
     .replace(/\n[ \t]+/g, "\n")
     .replace(/[ \t]+\n/g, "\n")
-    .replace(/https?:\/\/[^\s]+/g, "[링크]")
+    .replace(/https?:\/\/\S+/g, "[링크]")
     .replace(
       /(안녕하세요|감사합니다|Regards|Best regards|Thank you)/gi,
       "\n\n$1"
     )
-    .replace(/([.!?。！？]) +(?=[가-힣A-Za-z0-9])/g, "$1\n")
+    .replace(/([.!?。！？])\s+(?=[가-힣A-Za-z0-9])/g, "$1\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

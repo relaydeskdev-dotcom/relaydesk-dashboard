@@ -144,89 +144,65 @@ function 추출텍스트품질낮음(text: string) {
 function 메일푸터제거(text: string): string {
   if (!text) return "";
 
-  const 정리된텍스트 = text
-    .replace(/\r/g, "")
+  let 정리된텍스트 = text
+    .replace(/\r\n|\r/g, "\n")
+    .replace(/\\r\\n|\\n|\\r/g, "\n")
     .replace(/\u00a0/g, " ")
+    .replace(/\u200c/g, " ")
+    .replace(/&zwnj;/gi, " ")
     .trim();
 
-  
-  const 강제푸터구분된텍스트 = 정리된텍스트.replace(
-  /(이 알림은.+?이메일 주소로 전송되었습니다|본 이메일은 발신 전용|본 메일은 발신 전용|this email was sent to|this is an automated email|please do not reply|view this email in your browser)/gi,
-  "\n$1"
-);
-
-const 줄목록 = 강제푸터구분된텍스트.split("\n");
-  let 푸터시작위치 = -1;
-
-  const 푸터시작패턴 = [
-    // 한국어
-    /본\s*이메일은\s*발신\s*전용/i,
-    /본\s*메일은\s*발신\s*전용/i,
-    /답장하지\s*마세요/i,
-    /회신하지\s*마세요/i,
-    /수신을\s*원하지\s*않/i,
-    /수신거부/i,
-    /이메일\s*수신\s*설정/i,
-    /개인정보\s*처리방침/i,
-    /개인정보처리방침/i,
-    /이용약관/i,
-    /모든\s*권리\s*보유/i,
-    /모든\s*상표는/i,
-    /웹에서\s*메시지\s*보기/i,
-    /웹에서\s*보기/i,
-    /브라우저에서\s*보기/i,
-    /이\s*알림은.+이메일\s*주소로\s*전송/i,
-
-    // 영어
-    /this\s+(email|message)\s+was\s+sent\s+to/i,
-    /this\s+is\s+an\s+automated\s+(email|message)/i,
-    /do\s+not\s+reply/i,
-    /please\s+do\s+not\s+reply/i,
-    /unsubscribe/i,
-    /manage\s+(your\s+)?email\s+preferences/i,
-    /privacy\s+policy/i,
-    /terms\s+of\s+(use|service)/i,
-    /all\s+rights\s+reserved/i,
-    /view\s+(this\s+)?(email|message)\s+in\s+(your\s+)?browser/i,
-    /view\s+on\s+the\s+web/i,
-
-    // 일본어
-    /このメールは送信専用/i,
-    /返信しないでください/i,
-    /配信停止/i,
-    /プライバシーポリシー/i,
+  const 명확한푸터패턴 = [
+    /이\s*알림은.{0,200}?이메일\s*주소로\s*전송되었습니다/gi,
+    /이\s*메일은.{0,200}?이메일\s*주소로\s*전송되었습니다/gi,
+    /본\s*(이메일|메일)은\s*발신\s*전용/gi,
+    /본\s*(이메일|메일)은\s*자동으로\s*발송/gi,
+    /이\s*(이메일|메일)은\s*자동으로\s*발송/gi,
+    /본\s*(이메일|메일)에\s*답장하지\s*마세요/gi,
+    /이\s*(이메일|메일)에\s*답장하지\s*마세요/gi,
+    /this\s+(email|message)\s+was\s+sent\s+to/gi,
+    /this\s+is\s+an\s+automated\s+(email|message)/gi,
+    /please\s+do\s+not\s+reply\s+to\s+this\s+(email|message)/gi,
+    /do\s+not\s+reply\s+to\s+this\s+(email|message)/gi,
+    /view\s+(this\s+)?(email|message)\s+in\s+(your\s+)?browser/gi,
+    /このメールは送信専用/gi,
+    /このメールは自動送信/gi,
   ];
 
-  /**
-   * 메일의 앞부분에 있는 "개인정보" 같은 정상 문장을
-   * 실수로 자르지 않도록, 뒤쪽 60% 구간에서만 푸터를 탐색한다.
-   */
-  const 탐색시작위치 = Math.max(0, Math.floor(줄목록.length * 0.4));
+  const 최소허용위치 =
+    정리된텍스트.length >= 200
+      ? Math.floor(정리된텍스트.length * 0.15)
+      : 0;
 
-  for (let i = 탐색시작위치; i < 줄목록.length; i += 1) {
-    const 현재줄 = 줄목록[i].trim();
+  let 푸터시작위치 = -1;
 
-    if (!현재줄) continue;
+  for (const 패턴 of 명확한푸터패턴) {
+    패턴.lastIndex = 0;
+    let 일치: RegExpExecArray | null;
 
-    const 푸터패턴일치 = 푸터시작패턴.some((패턴) =>
-      패턴.test(현재줄)
-    );
+    while ((일치 = 패턴.exec(정리된텍스트)) !== null) {
+      if (일치.index >= 최소허용위치) {
+        if (푸터시작위치 === -1 || 일치.index < 푸터시작위치) {
+          푸터시작위치 = 일치.index;
+        }
+        break;
+      }
 
-    if (푸터패턴일치) {
-      푸터시작위치 = i;
-      break;
+      if (일치[0].length === 0) {
+        패턴.lastIndex += 1;
+      }
     }
   }
 
   if (푸터시작위치 >= 0) {
-    return 줄목록
+    정리된텍스트 = 정리된텍스트
       .slice(0, 푸터시작위치)
-      .join("\n")
-      .replace(/\n{3,}/g, "\n\n")
       .trim();
   }
 
-  return 정리된텍스트;
+  return 정리된텍스트
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function 읽기좋게정리(text: string): string {
@@ -411,6 +387,18 @@ function 이메일HTML문서만들기(html: string) {
   return `<!doctype html>${documentNode.documentElement.outerHTML}`;
 }
 
+function 기본보기모드결정(row: AnyRow): 보기모드타입 {
+  const textBody = 텍스트본문추출(row);
+  const htmlBody = html본문추출(row);
+
+  if (!htmlBody) return "읽기좋게";
+  if (!textBody) return "원본HTML";
+
+  return 추출텍스트품질낮음(textBody)
+    ? "원본HTML"
+    : "읽기좋게";
+}
+
 export default function 메일원문보기모달({
   열림,
   닫기,
@@ -463,9 +451,7 @@ export default function 메일원문보기모달({
 
         set원문(조회된원문);
 
-        if (html본문추출(조회된원문)) {
-          set보기모드("원본HTML");
-        }
+        set보기모드(기본보기모드결정(조회된원문));
 
         set로딩중(false);
         return;
@@ -490,9 +476,7 @@ export default function 메일원문보기모달({
 
         set원문(조회된원문);
 
-        if (html본문추출(조회된원문)) {
-          set보기모드("원본HTML");
-        }
+        set보기모드(기본보기모드결정(조회된원문));
 
         set로딩중(false);
         return;
@@ -506,13 +490,14 @@ export default function 메일원문보기모달({
   }, [열림, messageId, userId]);
 
   const 표시본문 = 원문본문추출(원문);
+  const 정리된표시본문 = 읽기좋게정리(표시본문);
   const html본문 = html본문추출(원문);
   const 본문유형 = 원문유형추정(원문);
 
   const 문단목록 = useMemo(() => {
-    if (!표시본문) return [];
-    return 문단나누기(표시본문);
-  }, [표시본문]);
+    if (!정리된표시본문) return [];
+    return 문단나누기(정리된표시본문);
+  }, [정리된표시본문]);
 
   const 안전한HTML문서 = useMemo(() => {
     if (!html본문) return "";
@@ -528,7 +513,7 @@ export default function 메일원문보기모달({
     !로딩중 &&
     !에러 &&
     Boolean(원문) &&
-    !표시본문 &&
+    !정리된표시본문 &&
     !html본문;
 
   return (
@@ -581,7 +566,7 @@ export default function 메일원문보기모달({
           {/* 보기 방식 전환 */}
           {!로딩중 && !에러 && 원문 && (
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              {표시본문 && (
+              {정리된표시본문 && (
                 <button
                   type="button"
                   onClick={() => set보기모드("읽기좋게")}
@@ -644,7 +629,7 @@ export default function 메일원문보기모달({
           {!로딩중 &&
             !에러 &&
             보기모드 === "읽기좋게" &&
-            표시본문 && (
+            정리된표시본문 && (
               <article className="mx-auto max-w-4xl rounded-xl border border-slate-200 bg-white px-5 py-6 shadow-sm sm:px-8">
                 <div className="space-y-4">
                   {문단목록.map((문단, index) => (

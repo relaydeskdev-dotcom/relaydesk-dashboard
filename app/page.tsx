@@ -3,6 +3,9 @@ import { supabase } from "@/lib/supabase";
 import 메일목록클라이언트, { EmailRow } from "@/components/메일목록클라이언트";
 import 관리메뉴 from "@/components/관리메뉴";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function Home() {
   const { data, error } = await supabase
     .from("emails")

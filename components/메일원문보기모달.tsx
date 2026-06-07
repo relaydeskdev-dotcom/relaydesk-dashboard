@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import DOMPurify from "dompurify";
 import { supabase } from "../lib/supabase";
 
 type Props = {
@@ -14,6 +15,7 @@ type Props = {
 };
 
 type AnyRow = Record<string, unknown>;
+type 보기모드타입 = "읽기좋게" | "원본HTML";
 
 function 값정리(value: unknown) {
   if (value === null || value === undefined) return "";
@@ -42,19 +44,23 @@ function htmlToText(html: string) {
     .replace(/<\/p>/gi, "\n")
     .replace(/<\/div>/gi, "\n")
     .replace(/<\/li>/gi, "\n")
+    .replace(/<\/tr>/gi, "\n")
+    .replace(/<\/h[1-6]>/gi, "\n")
+    .replace(/<img[^>]*alt=["']([^"']+)["'][^>]*>/gi, "$1 ")
     .replace(/<img[^>]*>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&zwnj;/gi, " ")
     .replace(/\u200c/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/\n{3,}/g, "\n\n")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/\n[ \t]+/g, "\n")
     .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -103,8 +109,10 @@ function 원문유형추정(row: AnyRow | null) {
   const textBody = 텍스트본문추출(row);
   const htmlBody = html본문추출(row);
 
-  if (textBody) return "텍스트 본문";
+  if (htmlBody && textBody) return "HTML 및 텍스트 본문";
   if (htmlBody) return "이미지/HTML 중심";
+  if (textBody) return "텍스트 본문";
+
   return "본문 없음";
 }
 
@@ -134,39 +142,185 @@ function 추출텍스트품질낮음(text: string) {
   );
 }
 
-
-function 읽기좋게정리(text: string): string {
+function 읽기좋게정리(text: string) {
   return text
     .replace(/\r/g, "")
     .replace(/\t/g, " ")
-    .replace(/[ \u00A0]{2,}/g, " ")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ ]{2,}/g, " ")
     .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/https?:\/\/[^\s]+/g, "[링크]")
+    .replace(
+      /(안녕하세요|감사합니다|Regards|Best regards|Thank you)/gi,
+      "\n\n$1"
+    )
+    .replace(/([.!?。！？]) +(?=[가-힣A-Za-z0-9])/g, "$1\n")
     .replace(/\n{3,}/g, "\n\n")
-    .replace(/https?:\/\/\S+/g, "[링크]")
-    .replace(/([.!?。！？])\s+/g, "$1\n")
-    .replace(/(안녕하세요|감사합니다|Regards|Best regards|Thank you)/gi, "\n$1")
     .trim();
 }
 
-function 문단나누기(text: string): string[] {
-  return 읽기좋게정리(text)
-    .split(/\n{2,}/)
-    .map((p: string) => p.trim())
+function 문단나누기(text: string) {
+  const 정리된본문 = 읽기좋게정리(text);
+
+  if (!정리된본문) return [];
+
+  return 정리된본문
+    .split(/\n+/)
+    .map((문단) => 문단.trim())
     .filter(Boolean);
 }
 
+/**
+ * 메일 HTML을 정제하고 독립된 iframe 문서로 만든다.
+ *
+ * iframe 내부에서 렌더링하므로 메일 CSS가
+ * RelayDesk 대시보드에 영향을 주지 않는다.
+ */
+function 이메일HTML문서만들기(html: string) {
+  if (!html || typeof window === "undefined") return "";
 
+  const 정제된HTML = DOMPurify.sanitize(html, {
+    WHOLE_DOCUMENT: true,
+    USE_PROFILES: {
+      html: true,
+    },
+    FORBID_TAGS: [
+      "script",
+      "iframe",
+      "frame",
+      "frameset",
+      "form",
+      "input",
+      "textarea",
+      "select",
+      "option",
+      "button",
+      "object",
+      "embed",
+      "applet",
+      "video",
+      "audio",
+      "canvas",
+      "svg",
+      "math",
+    ],
+    FORBID_ATTR: [
+      "srcdoc",
+      "formaction",
+      "autofocus",
+      "contenteditable",
+    ],
+  });
 
+  const parser = new DOMParser();
+  const documentNode = parser.parseFromString(정제된HTML, "text/html");
 
+  // 자동 새로고침이나 외부 페이지 강제 이동 방지
+  documentNode
+    .querySelectorAll('meta[http-equiv="refresh"]')
+    .forEach((element) => element.remove());
 
+  documentNode.querySelectorAll("base").forEach((element) => element.remove());
 
+  // 모든 링크는 RelayDesk 내부가 아니라 새 탭에서 열기
+  documentNode.querySelectorAll<HTMLAnchorElement>("a").forEach((link) => {
+    const href = link.getAttribute("href") || "";
 
+    if (
+      !href ||
+      href.startsWith("javascript:") ||
+      href.startsWith("data:")
+    ) {
+      link.removeAttribute("href");
+      return;
+    }
 
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+  });
 
+  // 메일 이미지 최적화 및 추적용 작은 이미지 제거
+  documentNode.querySelectorAll<HTMLImageElement>("img").forEach((image) => {
+    const width = Number.parseInt(image.getAttribute("width") || "", 10);
+    const height = Number.parseInt(image.getAttribute("height") || "", 10);
 
+    const 작은추적이미지 =
+      Number.isFinite(width) &&
+      Number.isFinite(height) &&
+      width <= 2 &&
+      height <= 2;
 
+    if (작은추적이미지) {
+      image.remove();
+      return;
+    }
 
+    image.setAttribute("loading", "lazy");
+    image.setAttribute("referrerpolicy", "no-referrer");
 
+    image.style.maxWidth = "100%";
+    image.style.height = "auto";
+  });
+
+  // 요소에 직접 붙은 이벤트 속성을 한 번 더 제거
+  documentNode.querySelectorAll("*").forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      if (attribute.name.toLowerCase().startsWith("on")) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+
+  const 메일보정스타일 = documentNode.createElement("style");
+
+  메일보정스타일.textContent = `
+    html {
+      width: 100%;
+      min-height: 100%;
+      background: #ffffff;
+    }
+
+    body {
+      width: 100%;
+      min-height: 100%;
+      margin: 0;
+      padding: 16px;
+      box-sizing: border-box;
+      overflow-wrap: anywhere;
+      background: #ffffff;
+      color: #0f172a;
+      font-family:
+        Arial,
+        "Apple SD Gothic Neo",
+        "Noto Sans KR",
+        sans-serif;
+    }
+
+    table {
+      max-width: 100% !important;
+    }
+
+    img {
+      max-width: 100% !important;
+      height: auto !important;
+    }
+
+    a {
+      cursor: pointer;
+    }
+
+    pre {
+      max-width: 100%;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+  `;
+
+  documentNode.head.appendChild(메일보정스타일);
+
+  return `<!doctype html>${documentNode.documentElement.outerHTML}`;
+}
 
 export default function 메일원문보기모달({
   열림,
@@ -180,7 +334,8 @@ export default function 메일원문보기모달({
   const [로딩중, set로딩중] = useState(false);
   const [에러, set에러] = useState("");
   const [원문, set원문] = useState<AnyRow | null>(null);
-  const [추출본문열림, set추출본문열림] = useState(false);
+  const [보기모드, set보기모드] =
+    useState<보기모드타입>("읽기좋게");
 
   useEffect(() => {
     if (!열림) return;
@@ -197,7 +352,7 @@ export default function 메일원문보기모달({
       set로딩중(true);
       set에러("");
       set원문(null);
-      set추출본문열림(false);
+      set보기모드("읽기좋게");
 
       const 정확조회 = await supabase
         .from("메일_원문")
@@ -207,13 +362,22 @@ export default function 메일원문보기모달({
         .limit(1);
 
       if (정확조회.error) {
-        set에러(`원문 조회 중 문제가 발생했습니다: ${정확조회.error.message}`);
+        set에러(
+          `원문 조회 중 문제가 발생했습니다: ${정확조회.error.message}`
+        );
         set로딩중(false);
         return;
       }
 
       if (정확조회.data && 정확조회.data.length > 0) {
-        set원문(정확조회.data[0] as AnyRow);
+        const 조회된원문 = 정확조회.data[0] as AnyRow;
+
+        set원문(조회된원문);
+
+        if (html본문추출(조회된원문)) {
+          set보기모드("원본HTML");
+        }
+
         set로딩중(false);
         return;
       }
@@ -225,13 +389,22 @@ export default function 메일원문보기모달({
         .limit(1);
 
       if (메시지조회.error) {
-        set에러(`원문 조회 중 문제가 발생했습니다: ${메시지조회.error.message}`);
+        set에러(
+          `원문 조회 중 문제가 발생했습니다: ${메시지조회.error.message}`
+        );
         set로딩중(false);
         return;
       }
 
       if (메시지조회.data && 메시지조회.data.length > 0) {
-        set원문(메시지조회.data[0] as AnyRow);
+        const 조회된원문 = 메시지조회.data[0] as AnyRow;
+
+        set원문(조회된원문);
+
+        if (html본문추출(조회된원문)) {
+          set보기모드("원본HTML");
+        }
+
         set로딩중(false);
         return;
       }
@@ -240,135 +413,216 @@ export default function 메일원문보기모달({
       set로딩중(false);
     }
 
-    원문가져오기();
+    void 원문가져오기();
   }, [열림, messageId, userId]);
-
-  if (!열림) return null;
 
   const 표시본문 = 원문본문추출(원문);
   const html본문 = html본문추출(원문);
   const 본문유형 = 원문유형추정(원문);
-  const 텍스트품질낮음 = 표시본문 ? 추출텍스트품질낮음(표시본문) : false;
 
-  const 안내카드필요 =
-    원문 && !로딩중 && !에러 && (!표시본문 || 텍스트품질낮음);
+  const 문단목록 = useMemo(() => {
+    if (!표시본문) return [];
+    return 문단나누기(표시본문);
+  }, [표시본문]);
 
-  const 일반본문표시 =
-    원문 && !로딩중 && !에러 && 표시본문 && !텍스트품질낮음;
+  const 안전한HTML문서 = useMemo(() => {
+    if (!html본문) return "";
+    return 이메일HTML문서만들기(html본문);
+  }, [html본문]);
+
+  if (!열림) return null;
+
+  const gmail링크존재 =
+    Boolean(gmailUrl) && gmailUrl !== "없음";
+
+  const 아무본문도없음 =
+    !로딩중 &&
+    !에러 &&
+    Boolean(원문) &&
+    !표시본문 &&
+    !html본문;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6"
       onClick={닫기}
     >
       <div
-        className="w-full max-w-4xl rounded-2xl bg-white p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
+        className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+        onClick={(event) => event.stopPropagation()}
       >
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-bold text-slate-950">원문 보기</h2>
+        {/* 상단 정보 */}
+        <div className="border-b border-slate-200 px-6 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="text-lg font-bold text-slate-950">
+                원문 보기
+              </h2>
 
-            {제목 && (
-              <p className="mt-1 text-sm text-slate-700">
-                <span className="font-semibold">제목:</span> {제목}
-              </p>
-            )}
+              {제목 && (
+                <p className="mt-1 break-words text-sm text-slate-700">
+                  <span className="font-semibold">제목:</span>{" "}
+                  {제목}
+                </p>
+              )}
 
-            {보낸사람 && (
-              <p className="mt-1 text-sm text-slate-700">
-                <span className="font-semibold">보낸 사람:</span> {보낸사람}
-              </p>
-            )}
+              {보낸사람 && (
+                <p className="mt-1 break-words text-sm text-slate-700">
+                  <span className="font-semibold">보낸 사람:</span>{" "}
+                  {보낸사람}
+                </p>
+              )}
+
+              {원문 && (
+                <p className="mt-1 text-xs text-slate-500">
+                  감지된 유형: {본문유형}
+                </p>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={닫기}
+              className="shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+            >
+              닫기
+            </button>
           </div>
 
-          <button
-            type="button"
-            onClick={닫기}
-            className="rounded-lg border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100"
-          >
-            닫기
-          </button>
+          {/* 보기 방식 전환 */}
+          {!로딩중 && !에러 && 원문 && (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {표시본문 && (
+                <button
+                  type="button"
+                  onClick={() => set보기모드("읽기좋게")}
+                  className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                    보기모드 === "읽기좋게"
+                      ? "bg-slate-900 text-white"
+                      : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  읽기 좋은 보기
+                </button>
+              )}
+
+              {html본문 && (
+                <button
+                  type="button"
+                  onClick={() => set보기모드("원본HTML")}
+                  className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                    보기모드 === "원본HTML"
+                      ? "bg-slate-900 text-white"
+                      : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  원본 디자인 보기
+                </button>
+              )}
+
+              {gmail링크존재 && (
+                <a
+                  href={gmailUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-auto rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700"
+                >
+                  Gmail에서 열기
+                </a>
+              )}
+            </div>
+          )}
         </div>
 
-        <div className="max-h-[65vh] overflow-y-auto rounded-xl border bg-slate-50 p-4">
+        {/* 본문 */}
+        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6">
           {로딩중 && (
-            <p className="text-sm text-slate-500">원문을 불러오는 중...</p>
+            <div className="rounded-xl border border-slate-200 bg-white p-5">
+              <p className="text-sm text-slate-500">
+                원문을 불러오는 중...
+              </p>
+            </div>
           )}
 
           {에러 && !로딩중 && (
-            <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+            <div className="rounded-xl border border-red-200 bg-red-50 p-5">
               <p className="whitespace-pre-wrap text-sm text-red-700">
                 {에러}
               </p>
             </div>
           )}
 
-        {일반본문표시 && (
-  <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-900">
-    {표시본문}
-  </pre>
-)}
+          {!로딩중 &&
+            !에러 &&
+            보기모드 === "읽기좋게" &&
+            표시본문 && (
+              <article className="mx-auto max-w-4xl rounded-xl border border-slate-200 bg-white px-5 py-6 shadow-sm sm:px-8">
+                <div className="space-y-4">
+                  {문단목록.map((문단, index) => (
+                    <p
+                      key={`${index}-${문단.slice(0, 20)}`}
+                      className="break-words text-sm leading-7 text-slate-800"
+                    >
+                      {문단}
+                    </p>
+                  ))}
+                </div>
+              </article>
+            )}
 
-          {안내카드필요 && (
-            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5">
-              <div>
-                <p className="text-sm font-semibold text-slate-900">
-                  이 메일은 이미지 또는 HTML 중심으로 구성된 메일입니다.
-                </p>
-
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  텍스트 추출 결과가 제한적이거나 원문 배치와 다르게 보일 수
-                  있습니다. 이미지, 버튼, 상품 정보, 표 형태의 내용은 원문에서
-                  확인하는 편이 더 정확합니다.
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-                <p>
-                  감지된 원문 유형:{" "}
-                  <span className="font-semibold text-slate-800">
-                    {본문유형}
-                  </span>
-                </p>
-
-                {html본문 && (
-                  <p className="mt-1">
-                    HTML 본문이 저장되어 있으나, 텍스트 변환 결과가 제한적일 수
-                    있습니다.
+          {!로딩중 &&
+            !에러 &&
+            보기모드 === "원본HTML" &&
+            html본문 && (
+              <div className="mx-auto max-w-5xl">
+                <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <p className="text-xs leading-5 text-amber-800">
+                    메일 디자인을 최대한 유지해 표시합니다. 일부
+                    상호작용 요소와 위험한 콘텐츠는 안전을 위해
+                    제거됩니다.
                   </p>
-                )}
+                </div>
+
+                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                  {안전한HTML문서 ? (
+                    <iframe
+                      title="메일 원본 HTML"
+                      srcDoc={안전한HTML문서}
+                      sandbox="allow-popups allow-popups-to-escape-sandbox"
+                      referrerPolicy="no-referrer"
+                      className="h-[68vh] min-h-[500px] w-full border-0 bg-white"
+                    />
+                  ) : (
+                    <div className="p-5">
+                      <p className="text-sm text-slate-600">
+                        HTML 본문을 표시하지 못했습니다.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
+            )}
 
-              <div className="flex flex-wrap gap-2">
-                {gmailUrl && gmailUrl !== "없음" && (
-                  <a
-                    href={gmailUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-xl bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700"
-                  >
-                    Gmail에서 원문 보기
-                  </a>
-                )}
+          {아무본문도없음 && (
+            <div className="mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-6 text-center">
+              <p className="text-sm font-semibold text-slate-900">
+                표시할 수 있는 본문이 없습니다.
+              </p>
 
-                {표시본문 && (
-                  <button
-                    type="button"
-                    onClick={() => set추출본문열림((prev) => !prev)}
-                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    {추출본문열림
-                      ? "추출 텍스트 숨기기"
-                      : "추출 텍스트 보기"}
-                  </button>
-                )}
-              </div>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                이미지가 Gmail 내부 참조 방식으로 포함되었거나 원문
+                데이터가 저장되지 않았을 수 있습니다.
+              </p>
 
-              {추출본문열림 && 표시본문 && (
-                <pre className="whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-700">
-                  {표시본문}
-                </pre>
+              {gmail링크존재 && (
+                <a
+                  href={gmailUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-4 inline-flex rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700"
+                >
+                  Gmail에서 원문 확인
+                </a>
               )}
             </div>
           )}

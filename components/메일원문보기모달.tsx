@@ -141,6 +141,87 @@ function 추출텍스트품질낮음(text: string) {
     (구조신호 && 가격패턴수 >= 2)
   );
 }
+function 메일푸터제거(text: string): string {
+  if (!text) return "";
+
+  const 정리된텍스트 = text
+    .replace(/\r/g, "")
+    .replace(/\u00a0/g, " ")
+    .trim();
+
+  const 줄목록 = 정리된텍스트.split("\n");
+  let 푸터시작위치 = -1;
+
+  const 푸터시작패턴 = [
+    // 한국어
+    /본\s*이메일은\s*발신\s*전용/i,
+    /본\s*메일은\s*발신\s*전용/i,
+    /답장하지\s*마세요/i,
+    /회신하지\s*마세요/i,
+    /수신을\s*원하지\s*않/i,
+    /수신거부/i,
+    /이메일\s*수신\s*설정/i,
+    /개인정보\s*처리방침/i,
+    /개인정보처리방침/i,
+    /이용약관/i,
+    /모든\s*권리\s*보유/i,
+    /모든\s*상표는/i,
+    /웹에서\s*메시지\s*보기/i,
+    /웹에서\s*보기/i,
+    /브라우저에서\s*보기/i,
+    /이\s*알림은.+이메일\s*주소로\s*전송/i,
+
+    // 영어
+    /this\s+(email|message)\s+was\s+sent\s+to/i,
+    /this\s+is\s+an\s+automated\s+(email|message)/i,
+    /do\s+not\s+reply/i,
+    /please\s+do\s+not\s+reply/i,
+    /unsubscribe/i,
+    /manage\s+(your\s+)?email\s+preferences/i,
+    /privacy\s+policy/i,
+    /terms\s+of\s+(use|service)/i,
+    /all\s+rights\s+reserved/i,
+    /view\s+(this\s+)?(email|message)\s+in\s+(your\s+)?browser/i,
+    /view\s+on\s+the\s+web/i,
+
+    // 일본어
+    /このメールは送信専用/i,
+    /返信しないでください/i,
+    /配信停止/i,
+    /プライバシーポリシー/i,
+  ];
+
+  /**
+   * 메일의 앞부분에 있는 "개인정보" 같은 정상 문장을
+   * 실수로 자르지 않도록, 뒤쪽 60% 구간에서만 푸터를 탐색한다.
+   */
+  const 탐색시작위치 = Math.max(0, Math.floor(줄목록.length * 0.4));
+
+  for (let i = 탐색시작위치; i < 줄목록.length; i += 1) {
+    const 현재줄 = 줄목록[i].trim();
+
+    if (!현재줄) continue;
+
+    const 푸터패턴일치 = 푸터시작패턴.some((패턴) =>
+      패턴.test(현재줄)
+    );
+
+    if (푸터패턴일치) {
+      푸터시작위치 = i;
+      break;
+    }
+  }
+
+  if (푸터시작위치 >= 0) {
+    return 줄목록
+      .slice(0, 푸터시작위치)
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  return 정리된텍스트;
+}
 
 function 읽기좋게정리(text: string) {
   return text

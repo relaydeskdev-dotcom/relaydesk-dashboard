@@ -134,6 +134,40 @@ function 추출텍스트품질낮음(text: string) {
   );
 }
 
+
+function 읽기좋게정리(text: string): string {
+  return text
+    .replace(/\r/g, "")
+    .replace(/\t/g, " ")
+    .replace(/[ \u00A0]{2,}/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/https?:\/\/\S+/g, "[링크]")
+    .replace(/([.!?。！？])\s+/g, "$1\n")
+    .replace(/(안녕하세요|감사합니다|Regards|Best regards|Thank you)/gi, "\n$1")
+    .trim();
+}
+
+function 문단나누기(text: string): string[] {
+  return 읽기좋게정리(text)
+    .split(/\n{2,}/)
+    .map((p: string) => p.trim())
+    .filter(Boolean);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 export default function 메일원문보기모달({
   열림,
   닫기,
@@ -270,11 +304,11 @@ export default function 메일원문보기모달({
             </div>
           )}
 
-          {일반본문표시 && (
-            <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-900">
-              {표시본문}
-            </pre>
-          )}
+        {일반본문표시 && (
+  <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-900">
+    {표시본문}
+  </pre>
+)}
 
           {안내카드필요 && (
             <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5">
